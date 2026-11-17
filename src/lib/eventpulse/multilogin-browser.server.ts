@@ -219,25 +219,25 @@ function nextScraperProxy() {
 }
 
 export function parseScraperProxyPool(raw: string | undefined): ScraperProxy[] {
-  const trimmed = raw?.trim();
+  const trimmed = stripQuotes(raw?.trim() ?? "");
   if (!trimmed) return [];
 
-  // A JSON array, or a plain list separated by commas, spaces or new lines.
-  let values: unknown[];
+  // A JSON array, or a plain list separated by commas, spaces or new lines. A bracketed list that is
+  // not valid JSON (single quotes, unquoted entries) is read as a plain list.
+  let values: unknown[] | null = null;
   if (trimmed.startsWith("[")) {
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(trimmed);
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) values = parsed;
     } catch {
-      throw new Error("MULTILOGIN_SCRAPER_PROXIES is not a valid JSON array.");
+      // fall through to the plain list
     }
-    if (!Array.isArray(parsed)) {
-      throw new Error("MULTILOGIN_SCRAPER_PROXIES must be a JSON array of proxies.");
-    }
-    values = parsed;
-  } else {
-    values = trimmed.split(/[\s,]+/).filter(Boolean);
   }
+  values ??= trimmed
+    .replace(/^\[|\]$/g, "")
+    .split(/[\s,]+/)
+    .map(stripQuotes)
+    .filter(Boolean);
   if (values.length > 100) {
     throw new Error("MULTILOGIN_SCRAPER_PROXIES supports up to 100 proxy URLs.");
   }
@@ -254,15 +254,19 @@ const PROXY_SCHEMES: Record<string, ScraperProxy["type"]> = {
 const PROXY_FORMATS =
   "scheme://user:pass@host:port, user:pass@host:port, host:port:user:pass or user:pass:host:port";
 
+type ProxyLayout =
+  { hostPort: string; credentials?: string } | { hostPort: string; user: string; pass: string };
+
 // Parsed by hand rather than with URL so provider formats (host:port:user:pass) and passwords with
-// unescaped characters such as @ # / ? work. Error messages never include the proxy value.
+// unescaped characters such as @ # / ? : work. Every known layout is tried and the first that yields
+// a valid host:port wins. Errors never include the value, only its shape (see proxyShape).
 function parseScraperProxy(value: unknown, index: number): ScraperProxy {
   const label = `Scraper proxy #${index + 1}`;
-  if (typeof value !== "string" || !value.trim()) {
+  if (typeof value !== "string" || !stripQuotes(value.trim())) {
     throw new Error(`${label} must be a non-empty string.`);
   }
 
-  let rest = value.trim();
+  let rest = stripQuotes(value.trim());
   let type: ScraperProxy["type"] = "http";
   const scheme = /^([a-z][a-z0-9]*):\/\//i.exec(rest);
   if (scheme) {
@@ -273,52 +277,76 @@ function parseScraperProxy(value: unknown, index: number): ScraperProxy {
   }
   rest = rest.replace(/\/+$/, "");
 
-  let hostPort: string;
-  let username: string | undefined;
-  let password: string | undefined;
-  const at = rest.lastIndexOf("@");
-  if (at >= 0) {
-    // user:pass@host:port, or the reversed host:port@user:pass some providers export.
-    let credentials = rest.slice(0, at);
-    hostPort = rest.slice(at + 1);
-    if (!parseHostPort(hostPort) && parseHostPort(credentials)) {
-      [hostPort, credentials] = [credentials, hostPort];
+  const parts = rest.split(":");
+  const firstAt = rest.indexOf("@");
+  const lastAt = rest.lastIndexOf("@");
+  const layouts: ProxyLayout[] = [
+    // user:pass@host:port (password may contain @)
+    ...(lastAt >= 0
+      ? [{ hostPort: rest.slice(lastAt + 1), credentials: rest.slice(0, lastAt) }]
+      : []),
+    // host:port@user:pass (password may contain @)
+    ...(firstAt >= 0
+      ? [{ hostPort: rest.slice(0, firstAt), credentials: rest.slice(firstAt + 1) }]
+      : []),
+    // host:port
+    { hostPort: rest },
+    // host:port:user:pass (password may contain :)
+    ...(parts.length >= 4
+      ? [{ hostPort: parts.slice(0, 2).join(":"), user: parts[2]!, pass: parts.slice(3).join(":") }]
+      : []),
+    // user:pass:host:port (password may contain :)
+    ...(parts.length >= 4
+      ? [
+          {
+            hostPort: parts.slice(-2).join(":"),
+            user: parts[0]!,
+            pass: parts.slice(1, -2).join(":"),
+          },
+        ]
+      : []),
+  ];
+
+  for (const layout of layouts) {
+    const hostPort = parseHostPort(layout.hostPort);
+    if (!hostPort) continue;
+    let username: string | undefined;
+    let password: string | undefined;
+    if ("user" in layout) {
+      username = layout.user;
+      password = layout.pass;
+    } else if (layout.credentials !== undefined) {
+      const colon = layout.credentials.indexOf(":");
+      username = colon < 0 ? layout.credentials : layout.credentials.slice(0, colon);
+      password = colon < 0 ? undefined : layout.credentials.slice(colon + 1);
     }
-    const colon = credentials.indexOf(":");
-    username = colon < 0 ? credentials : credentials.slice(0, colon);
-    password = colon < 0 ? undefined : credentials.slice(colon + 1);
-  } else {
-    const parts = rest.split(":");
-    if (parts.length === 2) {
-      hostPort = rest;
-    } else if (parts.length >= 4 && isPort(parts[1]!)) {
-      // host:port:user:pass
-      hostPort = `${parts[0]}:${parts[1]}`;
-      username = parts[2];
-      password = parts.slice(3).join(":");
-    } else if (parts.length >= 4 && isPort(parts.at(-1)!)) {
-      // user:pass:host:port
-      hostPort = parts.slice(-2).join(":");
-      username = parts[0];
-      password = parts.slice(1, -2).join(":");
-    } else {
-      throw new Error(`${label} is not in a supported format (${PROXY_FORMATS}).`);
-    }
+    return {
+      ...hostPort,
+      type,
+      ...(username ? { username: decodeCredential(username) } : {}),
+      ...(password ? { password: decodeCredential(password) } : {}),
+    };
   }
 
-  const hostMatch = parseHostPort(hostPort);
-  if (!hostMatch) {
-    throw new Error(`${label} must include a valid host and port (${PROXY_FORMATS}).`);
-  }
-  const port = hostMatch.port;
+  throw new Error(
+    `${label} has no valid host:port. Its shape is "${proxyShape(value)}" (letters shown as a, ` +
+      `digits as 9). Supported: ${PROXY_FORMATS}.`,
+  );
+}
 
-  return {
-    host: hostMatch.host,
-    port,
-    type,
-    ...(username ? { username: decodeCredential(username) } : {}),
-    ...(password ? { password: decodeCredential(password) } : {}),
-  };
+// Structure of a proxy value with every letter run shown as "a" and digit run as "9", so an error
+// can describe the format without revealing hosts, user names or passwords.
+function proxyShape(value: string) {
+  return value
+    .trim()
+    .replace(/[a-z]+/gi, "a")
+    .replace(/[0-9]+/g, "9")
+    .replace(/(?:a|9)+/g, (run) => (/^9+$/.test(run) ? "9" : run.length > 1 ? "a" : run))
+    .slice(0, 120);
+}
+
+function stripQuotes(value: string) {
+  return value.replace(/^(['"])(.*)\1$/s, "$2").trim();
 }
 
 function isPort(value: string) {

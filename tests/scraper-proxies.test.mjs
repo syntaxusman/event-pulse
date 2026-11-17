@@ -69,5 +69,29 @@ test("scraper proxies: errors never echo the secret", () => {
       (error) => /Scraper proxy #1/.test(error.message) && !error.message.includes("secretpw"),
     );
   }
-  assert.throws(() => parseScraperProxyPool("[not json"), /not a valid JSON array/);
+  assert.throws(
+    () => parseScraperProxyPool("[not json"),
+    /Scraper proxy #1 has no valid host:port/,
+  );
+});
+
+test("scraper proxies: passwords with @ in provider layouts", () => {
+  assert.equal(one("gb.example:7777:user:p@ss").password, "p@ss");
+  assert.equal(one("user:p@ss:gb.example:7777").password, "p@ss");
+  assert.equal(one("gb.example:7777@user:p@ss").password, "p@ss");
+});
+
+test("scraper proxies: stray quotes and non-JSON brackets", () => {
+  assert.equal(parseScraperProxyPool("'[\"a.example:1\"]'").length, 1);
+  assert.equal(parseScraperProxyPool("['a.example:1', 'b.example:2']").length, 2);
+  assert.equal(parseScraperProxyPool('"a.example:1"')[0].host, "a.example");
+});
+
+test("scraper proxies: error shows only the value's shape", () => {
+  assert.throws(
+    () => one("gate.secret-host.com::user42:Pw!x"),
+    (error) =>
+      error.message.includes('shape is "a.a-a.a::a:a!a"') &&
+      !/secret|user42|Pw/.test(error.message),
+  );
 });
