@@ -121,26 +121,81 @@ export async function readRenderedTicketPage(input: RenderedPageInput) {
   if (scraperProxy) {
     return readWithQuickProfile(input, token, scraperProxy);
   }
+  // The Linux launcher container cannot run the approved (Mimic) profiles. Read pages through a
+  // throwaway quick profile instead; the approved profiles are never touched.
+  if (approvedProfilesUnsupported) return readWithQuickProfile(input, token, null);
 
-  const port = await ensureProfileRunning(input, token);
-  return readPageFromPort(port, input.url, await proxyCredentialsFor(input.profileId, token));
+  let port: number;
+  try {
+    port = await ensureProfileRunning(input, token);
+  } catch (error) {
+    if (!isUnsupportedBrowserError(error)) throw error;
+    approvedProfilesUnsupported = true;
+    console.warn(
+      `HD-1: this Multilogin launcher cannot open approved profiles (${errorMessage(error)}). ` +
+        `Checking pages through temporary ${quickProfileBrowser()} quick profiles instead.`,
+    );
+    return readWithQuickProfile(input, token, null);
+  }
+  return readPageFromPort(port, input.url, {
+    browserType: "mimic",
+    credentials: await proxyCredentialsFor(input.profileId, token),
+  });
 }
 
-async function readWithQuickProfile(input: RenderedPageInput, token: string, proxy: ScraperProxy) {
-  const quickProfile = await startQuickProfile(input.endpoint, token, proxy);
+// Set once the launcher reports that it cannot run the approved profiles' browser (the Linux
+// launcher container only ships Stealthfox). Cleared on restart, so a launcher swap is picked up.
+let approvedProfilesUnsupported = false;
+
+function isUnsupportedBrowserError(error: unknown) {
+  return /BROWSER_NOT_SUPPORTED|not supported in this deployment/i.test(errorMessage(error));
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+type QuickBrowser = "stealthfox" | "mimic";
+
+// Browser engine for quick profiles. Stealthfox (Firefox) runs on every launcher, including the
+// Linux container; Mimic (Chromium) needs a desktop Multilogin agent.
+export function quickProfileBrowser(): QuickBrowser {
+  return process.env["MULTILOGIN_QUICK_BROWSER"]?.trim().toLowerCase() === "mimic"
+    ? "mimic"
+    : "stealthfox";
+}
+
+async function readWithQuickProfile(
+  input: RenderedPageInput,
+  token: string,
+  proxy: ScraperProxy | null,
+) {
+  const browserType = quickProfileBrowser();
+  const quickProfile = await startQuickProfile(input.endpoint, token, proxy, browserType);
   try {
-    return await readPageFromPort(quickProfile.port, input.url);
+    return await readPageFromPort(quickProfile.port, input.url, { browserType });
   } finally {
     await stopProfile(input.endpoint, token, quickProfile.id);
   }
 }
 
-async function readPageFromPort(port: number, url: string, credentials?: ProxyCredentials) {
-  const cdpHost = await resolveCdpHost();
-  const browser = await puppeteer.connect({
-    browserURL: `http://${formatHost(cdpHost)}:${port}`,
-    protocolTimeout: MULTILOGIN_TIMEOUT_MS,
-  });
+async function readPageFromPort(
+  port: number,
+  url: string,
+  options: { browserType: QuickBrowser; credentials?: ProxyCredentials },
+) {
+  const cdpHost = formatHost(await resolveCdpHost());
+  // Stealthfox is Firefox: automation runs over WebDriver BiDi. Mimic is Chromium: CDP.
+  const browser = await puppeteer.connect(
+    options.browserType === "stealthfox"
+      ? {
+          browserWSEndpoint: `ws://${cdpHost}:${port}/session`,
+          protocol: "webDriverBiDi",
+          protocolTimeout: MULTILOGIN_TIMEOUT_MS,
+        }
+      : { browserURL: `http://${cdpHost}:${port}`, protocolTimeout: MULTILOGIN_TIMEOUT_MS },
+  );
+  const { credentials } = options;
 
   const page = await browser.newPage();
   try {
@@ -210,12 +265,17 @@ function parseScraperProxy(value: unknown, index: number): ScraperProxy {
   };
 }
 
-async function startQuickProfile(endpoint: string, token: string, proxy: ScraperProxy) {
+async function startQuickProfile(
+  endpoint: string,
+  token: string,
+  proxy: ScraperProxy | null,
+  browserType: QuickBrowser,
+) {
   const response = await fetch(new URL("/api/v3/profile/quick", normalizeEndpoint(endpoint)), {
     method: "POST",
     headers: { ...launcherHeaders(token), "content-type": "application/json" },
     body: JSON.stringify({
-      browser_type: "mimic",
+      browser_type: browserType,
       os_type: "linux",
       automation: "puppeteer",
       is_headless: process.env["MULTILOGIN_HEADLESS"] === "true",
@@ -234,10 +294,11 @@ async function startQuickProfile(endpoint: string, token: string, proxy: Scraper
           fonts_masking: "mask",
           media_devices_masking: "mask",
           screen_masking: "mask",
-          proxy_masking: "custom",
+          // Without a scraper proxy the quick profile uses the launcher host's own connection.
+          proxy_masking: proxy ? "custom" : "disabled",
           ports_masking: "mask",
         },
-        proxy,
+        ...(proxy ? { proxy } : {}),
         fingerprint: {},
       },
     }),

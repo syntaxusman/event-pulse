@@ -346,6 +346,23 @@ This is implemented through `MULTILOGIN_SCRAPER_PROXIES`:
 
 Proxy URLs are secrets and must never be committed.
 
+### Linux launcher: Stealthfox fallback (added 17 November 2026)
+
+From 12 November 2026 every production check failed with
+`Multilogin launch failed (400): browser mimic is not supported in this deployment, supported: stealthfox`.
+The Linux `mlx-launcher` container only runs Stealthfox, while the approved client profiles are Mimic.
+
+The monitor now detects that launcher error once per process and switches to temporary Stealthfox
+quick profiles (driven by Puppeteer over WebDriver BiDi). A scraper proxy is used when
+`MULTILOGIN_SCRAPER_PROXIES` is set; otherwise the quick profile uses the launcher host's own
+connection and the per-profile safety interval still applies. Approved profiles are never opened.
+Verified locally against the production launcher image and a live Ticketmaster UK event: the
+facets and quickpicks inventory responses were captured and parsed.
+
+`MULTILOGIN_QUICK_BROWSER` (`stealthfox` default, or `mimic` on a desktop agent) selects the
+quick-profile engine. Supplying scraper proxies is recommended so all checks do not come from the
+server's single IP.
+
 ### Token health
 
 `GET /api/eventpulse/health` returns application health and a sanitised Multilogin token status without exposing the token.
@@ -640,7 +657,7 @@ Profile pause levels, recent profile load times, failure streaks, delivery queue
 
 ### Database migration history
 
-The repository does not contain a formal versioned Supabase migration directory. The production schema must be documented/exported before final handover so a new environment can be recreated reliably.
+`supabase/schema.sql` (added 17 November 2026) recreates all six tables. It was reconstructed from the live database's PostgREST schema and the application code, is idempotent, and was validated on an empty Postgres 16. It enables row-level security with no policies (service role only). Run it in the Supabase SQL editor for a new environment.
 
 ### Docker E2E dependency
 
@@ -765,12 +782,15 @@ Validate source:
 ```powershell
 npx tsc --noEmit
 npm test
-npm run build
+npm run build:node
 ```
+
+`npm run build` keeps Lovable's default Cloudflare target; `npm run build:node` builds the Node server used by Docker and the E2E suite.
 
 Run Docker-dependent E2E tests after Docker Desktop is ready:
 
 ```powershell
+npm run build:node
 npm run test:e2e
 ```
 
