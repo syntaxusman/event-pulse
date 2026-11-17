@@ -218,17 +218,25 @@ function nextScraperProxy() {
   return proxy;
 }
 
-function parseScraperProxyPool(raw: string | undefined): ScraperProxy[] {
-  if (!raw?.trim()) return [];
+export function parseScraperProxyPool(raw: string | undefined): ScraperProxy[] {
+  const trimmed = raw?.trim();
+  if (!trimmed) return [];
 
-  let values: unknown;
-  try {
-    values = JSON.parse(raw);
-  } catch {
-    throw new Error("MULTILOGIN_SCRAPER_PROXIES must be a JSON array of proxy URLs.");
-  }
-  if (!Array.isArray(values)) {
-    throw new Error("MULTILOGIN_SCRAPER_PROXIES must be a JSON array of proxy URLs.");
+  // A JSON array, or a plain list separated by commas, spaces or new lines.
+  let values: unknown[];
+  if (trimmed.startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error("MULTILOGIN_SCRAPER_PROXIES is not a valid JSON array.");
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error("MULTILOGIN_SCRAPER_PROXIES must be a JSON array of proxies.");
+    }
+    values = parsed;
+  } else {
+    values = trimmed.split(/[\s,]+/).filter(Boolean);
   }
   if (values.length > 100) {
     throw new Error("MULTILOGIN_SCRAPER_PROXIES supports up to 100 proxy URLs.");
@@ -237,32 +245,79 @@ function parseScraperProxyPool(raw: string | undefined): ScraperProxy[] {
   return values.map((value, index) => parseScraperProxy(value, index));
 }
 
+const PROXY_SCHEMES: Record<string, ScraperProxy["type"]> = {
+  http: "http",
+  https: "http",
+  socks5: "socks5",
+  socks5h: "socks5",
+};
+const PROXY_FORMATS = "scheme://user:pass@host:port, user:pass@host:port or host:port:user:pass";
+
+// Parsed by hand rather than with URL so provider formats (host:port:user:pass) and passwords with
+// unescaped characters such as @ # / ? work. Error messages never include the proxy value.
 function parseScraperProxy(value: unknown, index: number): ScraperProxy {
+  const label = `Scraper proxy #${index + 1}`;
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`Scraper proxy #${index + 1} must be a non-empty URL.`);
+    throw new Error(`${label} must be a non-empty string.`);
   }
 
-  let url: URL;
-  try {
-    url = new URL(value.includes("://") ? value : `http://${value}`);
-  } catch {
-    throw new Error(`Scraper proxy #${index + 1} is invalid.`);
+  let rest = value.trim();
+  let type: ScraperProxy["type"] = "http";
+  const scheme = /^([a-z][a-z0-9]*):\/\//i.exec(rest);
+  if (scheme) {
+    const schemeType = PROXY_SCHEMES[scheme[1]!.toLowerCase()];
+    if (!schemeType) throw new Error(`${label} must use http:// or socks5://.`);
+    type = schemeType;
+    rest = rest.slice(scheme[0].length);
   }
-  if (url.protocol !== "http:" && url.protocol !== "socks5:") {
-    throw new Error(`Scraper proxy #${index + 1} must use http:// or socks5://.`);
+  rest = rest.replace(/\/+$/, "");
+
+  let hostPort: string;
+  let username: string | undefined;
+  let password: string | undefined;
+  const at = rest.lastIndexOf("@");
+  if (at >= 0) {
+    hostPort = rest.slice(at + 1);
+    const credentials = rest.slice(0, at);
+    const colon = credentials.indexOf(":");
+    username = colon < 0 ? credentials : credentials.slice(0, colon);
+    password = colon < 0 ? undefined : credentials.slice(colon + 1);
+  } else {
+    const parts = rest.split(":");
+    if (parts.length === 2) {
+      hostPort = rest;
+    } else if (parts.length >= 4) {
+      hostPort = `${parts[0]}:${parts[1]}`;
+      username = parts[2];
+      password = parts.slice(3).join(":");
+    } else {
+      throw new Error(`${label} is not in a supported format (${PROXY_FORMATS}).`);
+    }
   }
-  const port = Number(url.port);
-  if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`Scraper proxy #${index + 1} must include a valid host and port.`);
+
+  const hostMatch = /^([a-z0-9.-]+|\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(hostPort);
+  const port = Number(hostMatch?.[2]);
+  if (!hostMatch || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${label} must include a valid host and port (${PROXY_FORMATS}).`);
   }
 
   return {
-    host: url.hostname,
+    host: hostMatch[1]!.replace(/^\[|\]$/g, ""),
     port,
-    type: url.protocol === "socks5:" ? "socks5" : "http",
-    ...(url.username ? { username: decodeURIComponent(url.username) } : {}),
-    ...(url.password ? { password: decodeURIComponent(url.password) } : {}),
+    type,
+    ...(username ? { username: decodeCredential(username) } : {}),
+    ...(password ? { password: decodeCredential(password) } : {}),
   };
+}
+
+// Accepts both percent-encoded and raw credentials.
+function decodeCredential(value: string) {
+  if (!/%[0-9a-f]{2}/i.test(value)) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 async function startQuickProfile(

@@ -152,7 +152,7 @@ temporary Multilogin quick profile for each target check:
 MULTILOGIN_SCRAPER_PROXIES=["http://user:password@host1:8000","socks5://user:password@host2:1080"]
 ```
 
-URLs may use `http://` or `socks5://`. The pool rotates sequentially and wraps to the first proxy
+Entries may be `scheme://user:pass@host:port` (`http`, `https`, `socks5`, `socks5h`), `user:pass@host:port`, `host:port:user:pass` (common provider export) or `host:port`. Passwords may contain `@ # / ?` unescaped. The value can be a JSON array or a plain comma/new-line separated list. The pool rotates sequentially and wraps to the first proxy
 after the last. Each quick profile is stopped and deleted after its check. Existing approved
 Multilogin profiles, cookies, and sticky proxy assignments are not edited. Leave the value as `[]`
 to keep using the assigned regular profiles. Store this value only in the deployment secret manager;
