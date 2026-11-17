@@ -13,7 +13,8 @@
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "node tests/e2e/run.mjs",
     "format": "prettier --write .",
-    "test:discord": "node --env-file=.env scripts/test-discord.mjs"
+    "test:discord": "node --env-file=.env scripts/test-discord.mjs",
+    "check:proxies": "node --env-file-if-exists=.env scripts/check-proxies.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

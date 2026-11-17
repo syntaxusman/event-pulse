@@ -251,7 +251,8 @@ const PROXY_SCHEMES: Record<string, ScraperProxy["type"]> = {
   socks5: "socks5",
   socks5h: "socks5",
 };
-const PROXY_FORMATS = "scheme://user:pass@host:port, user:pass@host:port or host:port:user:pass";
+const PROXY_FORMATS =
+  "scheme://user:pass@host:port, user:pass@host:port, host:port:user:pass or user:pass:host:port";
 
 // Parsed by hand rather than with URL so provider formats (host:port:user:pass) and passwords with
 // unescaped characters such as @ # / ? work. Error messages never include the proxy value.
@@ -277,8 +278,12 @@ function parseScraperProxy(value: unknown, index: number): ScraperProxy {
   let password: string | undefined;
   const at = rest.lastIndexOf("@");
   if (at >= 0) {
+    // user:pass@host:port, or the reversed host:port@user:pass some providers export.
+    let credentials = rest.slice(0, at);
     hostPort = rest.slice(at + 1);
-    const credentials = rest.slice(0, at);
+    if (!parseHostPort(hostPort) && parseHostPort(credentials)) {
+      [hostPort, credentials] = [credentials, hostPort];
+    }
     const colon = credentials.indexOf(":");
     username = colon < 0 ? credentials : credentials.slice(0, colon);
     password = colon < 0 ? undefined : credentials.slice(colon + 1);
@@ -286,28 +291,45 @@ function parseScraperProxy(value: unknown, index: number): ScraperProxy {
     const parts = rest.split(":");
     if (parts.length === 2) {
       hostPort = rest;
-    } else if (parts.length >= 4) {
+    } else if (parts.length >= 4 && isPort(parts[1]!)) {
+      // host:port:user:pass
       hostPort = `${parts[0]}:${parts[1]}`;
       username = parts[2];
       password = parts.slice(3).join(":");
+    } else if (parts.length >= 4 && isPort(parts.at(-1)!)) {
+      // user:pass:host:port
+      hostPort = parts.slice(-2).join(":");
+      username = parts[0];
+      password = parts.slice(1, -2).join(":");
     } else {
       throw new Error(`${label} is not in a supported format (${PROXY_FORMATS}).`);
     }
   }
 
-  const hostMatch = /^([a-z0-9.-]+|\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(hostPort);
-  const port = Number(hostMatch?.[2]);
-  if (!hostMatch || !Number.isInteger(port) || port < 1 || port > 65_535) {
+  const hostMatch = parseHostPort(hostPort);
+  if (!hostMatch) {
     throw new Error(`${label} must include a valid host and port (${PROXY_FORMATS}).`);
   }
+  const port = hostMatch.port;
 
   return {
-    host: hostMatch[1]!.replace(/^\[|\]$/g, ""),
+    host: hostMatch.host,
     port,
     type,
     ...(username ? { username: decodeCredential(username) } : {}),
     ...(password ? { password: decodeCredential(password) } : {}),
   };
+}
+
+function isPort(value: string) {
+  const port = Number(value);
+  return /^\d{1,5}$/.test(value) && port >= 1 && port <= 65_535;
+}
+
+function parseHostPort(value: string) {
+  const match = /^([a-z0-9._-]+|\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(value.trim());
+  if (!match || !isPort(match[2]!)) return null;
+  return { host: match[1]!.replace(/^\[|\]$/g, ""), port: Number(match[2]) };
 }
 
 // Accepts both percent-encoded and raw credentials.
