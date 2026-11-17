@@ -67,6 +67,11 @@ export function hasConfiguredScraperProxyPool() {
   return parseScraperProxyPool(process.env["MULTILOGIN_SCRAPER_PROXIES"]).length > 0;
 }
 
+// True when checks run in throwaway quick profiles instead of the assigned client profiles.
+export function usesTemporaryProfiles() {
+  return approvedProfilesUnsupported || hasConfiguredScraperProxyPool();
+}
+
 export function getMultiloginTokenHealth(now = Date.now()): MultiloginTokenHealth {
   const token = process.env["MULTILOGIN_API_TOKEN"];
   if (!token) {
