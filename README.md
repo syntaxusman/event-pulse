@@ -130,6 +130,19 @@ Captcha challenge pages remain visible as a target status but do not create aler
 send push, Telegram, Discord, SMS, or WhatsApp messages. This prevents challenge pages from
 repeating a notification on every interval.
 
+## Linux launcher and Stealthfox quick profiles
+
+The production launcher container (`mlx-launcher`) only runs Stealthfox (Firefox). The approved
+client profiles are Mimic (Chromium), so that launcher refuses to open them
+(`browser mimic is not supported in this deployment`). When the launcher reports this, the monitor
+switches automatically to temporary Stealthfox quick profiles: each check starts a throwaway
+profile, reads the page over WebDriver BiDi, and stops it. The approved profiles, their cookies and
+their sticky proxies are never opened or changed. Without a scraper proxy pool these checks use the
+launcher host's own connection, so the per-profile safety interval still applies.
+
+`MULTILOGIN_QUICK_BROWSER` selects the quick-profile engine: `stealthfox` (default) or `mimic`
+(only on a desktop Multilogin agent).
+
 ## Rotating scraper proxies
 
 Set `MULTILOGIN_SCRAPER_PROXIES` to a JSON array of server-side proxy URLs to use a different

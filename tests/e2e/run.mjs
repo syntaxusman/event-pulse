@@ -4,11 +4,11 @@
 //   JSON-LD, ISMDS facets, quickpicks) at the real URL paths -> fake Telegram Bot API and
 //   Discord webhook that record every message.
 //
-// Usage: npm run build && npm run test:e2e   (Docker must be running)
+// Usage: npm run build:node && npm run test:e2e   (Docker must be running)
 
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import puppeteer from "puppeteer-core";
 import { EVENTS, billBaileyScenario, loadEvent } from "../fixtures.mjs";
@@ -33,7 +33,13 @@ const PROFILE_A = "PERS - kajnathwani@gmail.com";
 const PROFILE_B = "PERS - jasraghwani99@gmail.com";
 
 if (!existsSync(".output/server/index.mjs")) {
-  console.error("Run `npm run build` first.");
+  console.error("Run `npm run build:node` first.");
+  process.exit(1);
+}
+// Plain `npm run build` targets Cloudflare (Lovable default); that bundle never listens on a port.
+const nitroPreset = JSON.parse(readFileSync(".output/nitro.json", "utf8")).preset;
+if (nitroPreset !== "node-server") {
+  console.error(`.output was built for "${nitroPreset}". Run \`npm run build:node\` first.`);
   process.exit(1);
 }
 
