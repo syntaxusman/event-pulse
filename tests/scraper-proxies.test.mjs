@@ -28,6 +28,21 @@ test("scraper proxies: provider host:port:user:pass format", () => {
   });
 });
 
+test("scraper proxies: reversed provider orders and underscores", () => {
+  const expected = {
+    host: "gb.residential.example",
+    port: 7777,
+    type: "http",
+    username: "customer-abc",
+    password: "secret",
+  };
+  assert.deepEqual(one("customer-abc:secret:gb.residential.example:7777"), expected);
+  assert.deepEqual(one("http://customer-abc:secret:gb.residential.example:7777"), expected);
+  assert.deepEqual(one("gb.residential.example:7777@customer-abc:secret"), expected);
+  assert.deepEqual(one("http://customer-abc:secret@gb.residential.example:7777"), expected);
+  assert.equal(one("u:p@proxy_gb.example:8000").host, "proxy_gb.example");
+});
+
 test("scraper proxies: unescaped and escaped special characters in passwords", () => {
   assert.equal(one("http://user:p@ss#w/rd?1@proxy.example:8000").password, "p@ss#w/rd?1");
   assert.equal(one("user:p@ss@proxy.example:8000").password, "p@ss");
