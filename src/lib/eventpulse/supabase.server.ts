@@ -805,7 +805,7 @@ async function handleCheckResult(
         tone: "warn",
         operational: true,
         content: dashboardAlert(
-          "⏹ HD-1: event page removed",
+          "⏹ HD-1 Drop Monitor: event page removed",
           `${target.event}: the ticket site no longer has this event page (HTTP ${check.statusCode}), usually because the event is over. Monitoring for it has stopped.\n${target.url}`,
         ),
       },
@@ -823,7 +823,7 @@ async function handleCheckResult(
   if (!check.usesRotatingProxy && recordProfileSuccess(target.profile)) {
     await resolveOpsNotice(
       `blocked:${target.profile}`,
-      "✅ HD-1: profile checks resumed",
+      "✅ HD-1 Drop Monitor: profile checks resumed",
       `Ticketmaster is answering profile "${target.profile}" again; ticket checks resumed.`,
       context,
     );
@@ -884,7 +884,7 @@ async function handleBlockedCheck(
       : "identity verification (HTTP 403)";
   await sendOpsNotice(
     `blocked:${target.profile}`,
-    "⏸ HD-1: profile paused",
+    "⏸ HD-1 Drop Monitor: profile paused",
     [
       usesTemporaryProfiles()
         ? `Ticketmaster asked for ${reason} on checks for targets assigned to "${target.profile}". ` +
@@ -915,7 +915,7 @@ async function handleFailedCheck(
   ).length;
   await sendOpsNotice(
     key,
-    "⚠️ HD-1: ticket checks failing",
+    "⚠️ HD-1 Drop Monitor: ticket checks failing",
     [
       `${target.event} could not be checked ${FAILURE_NOTIFY_AFTER} times in a row${affected > 1 ? ` (${affected} targets affected)` : ""}.`,
       `Reason: ${message}`,
@@ -932,7 +932,7 @@ async function clearFailure(target: BackendMonitorTarget, context: AlertContext)
   if ([...failureStreaks.values()].some((item) => item.key === streak.key)) return;
   await resolveOpsNotice(
     streak.key,
-    "✅ HD-1: ticket checks recovered",
+    "✅ HD-1 Drop Monitor: ticket checks recovered",
     "Targets are being checked normally again.",
     context,
   );
@@ -1033,7 +1033,7 @@ export async function notifyMonitorFailure(error: unknown) {
 
   const message = formatUnknownError(error).replace(/\s+/g, " ").slice(0, 500);
   await deliverOperationalAlert(
-    "🔴 HD-1: monitor pass failed",
+    "🔴 HD-1 Drop Monitor: monitor pass failed",
     [
       "Ticket checks are failing; no ticket alerts are being produced until this clears.",
       `Error: ${message}`,
@@ -1048,7 +1048,7 @@ export async function notifyMonitorRecovered() {
   const { since } = monitorOutage;
   monitorOutage = null;
   await deliverOperationalAlert(
-    "✅ HD-1: monitor recovered",
+    "✅ HD-1 Drop Monitor: monitor recovered",
     `Ticket checks are running again.\nFailing since: ${since}\nRecovered: ${new Date().toISOString()}`,
   );
 }
@@ -1105,7 +1105,7 @@ export async function notifyMonitorFreshness() {
     if (staleMonitor && now - staleMonitor.alertedAt < STALE_NOTICE_REPEAT_MS) return;
     staleMonitor = { since: staleMonitor?.since ?? new Date(now).toISOString(), alertedAt: now };
     await deliverOperationalAlert(
-      "🟠 HD-1: no successful ticket checks",
+      "🟠 HD-1 Drop Monitor: no successful ticket checks",
       [
         `None of the ${freshness.activeTargets} active targets has had a clean check for over ${freshness.staleAfterMinutes} minutes, so no ticket alerts can be produced.`,
         `Last clean check: ${freshness.lastSuccessfulCheckAt ?? "never"}`,
@@ -1118,7 +1118,7 @@ export async function notifyMonitorFreshness() {
     const { since } = staleMonitor;
     staleMonitor = null;
     await deliverOperationalAlert(
-      "✅ HD-1: ticket checks healthy again",
+      "✅ HD-1 Drop Monitor: ticket checks healthy again",
       `Clean ticket checks resumed.\nStale since: ${since}\nRecovered: ${new Date().toISOString()}`,
     );
   }
@@ -1446,7 +1446,7 @@ async function notifyMultiloginTokenExpiry(
 
   const delivery = await deliverAlert({
     ...(alert?.id ? { alertId: alert.id } : {}),
-    content: dashboardAlert("⚠️ HD-1: MultiLogin token", alertMessage),
+    content: dashboardAlert("⚠️ HD-1 Drop Monitor: MultiLogin token", alertMessage),
     settings,
     subscriptions,
   });

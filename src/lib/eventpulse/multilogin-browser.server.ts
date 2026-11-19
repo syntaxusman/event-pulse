@@ -137,7 +137,7 @@ export async function readRenderedTicketPage(input: RenderedPageInput) {
     if (!isUnsupportedBrowserError(error)) throw error;
     approvedProfilesUnsupported = true;
     console.warn(
-      `HD-1: this Multilogin launcher cannot open approved profiles (${errorMessage(error)}). ` +
+      `HD-1 Drop Monitor: this Multilogin launcher cannot open approved profiles (${errorMessage(error)}). ` +
         `Checking pages through temporary ${quickProfileBrowser()} quick profiles instead.`,
     );
     return readWithQuickProfile(input, token, null);
